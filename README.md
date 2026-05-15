@@ -248,3 +248,6 @@ Important:
 # 📜 License
 
 This project is for academic and educational purposes.
+
+<img width="1460" height="868" alt="image" src="https://github.com/user-attachments/assets/0674b50e-e149-4738-a441-c0b85fe08acd" />
+
