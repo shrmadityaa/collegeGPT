@@ -24,53 +24,34 @@ def remove_duplicates(documents):
 
 
 def detect_semester(query):
-
-    match = re.search(
-        r"semester[- ]?(i|ii|iii|iv|v|vi|vii|viii|1|2|3|4|5|6|7|8)",
-        query,
-        re.IGNORECASE
-    )
-
+    # Fix: Normalizes 1-8 to I-VIII so it matches the metadata perfectly
+    match = re.search(r"semester[- ]?(i{1,3}|iv|v|vi{0,3}|viii|[1-8])", query, re.IGNORECASE)
     if match:
-        return match.group(1).upper()
-
+        raw = match.group(1).upper()
+        roman_map = {"1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII"}
+        return roman_map.get(raw, raw)
     return None
 
 
 def hybrid_search(query):
-
     semantic_docs = semantic_search(query, k=8)
-
     bm25_docs = bm25_search(query)
 
-    docs = remove_duplicates(
-        semantic_docs + bm25_docs
-    )
-
+    docs = remove_duplicates(semantic_docs + bm25_docs)
     semester_query = detect_semester(query)
 
     filtered_docs = []
-
     for doc in docs:
-
         metadata = doc.metadata
-
-        score = 0
+        
+        # Base score of 1 ensures good semantic documents are NEVER deleted
+        score = 1 
 
         # SEMESTER MATCH BOOST
         if semester_query:
-
-            semester = metadata.get(
-                "semester",
-                ""
-            ).upper()
-
+            semester = metadata.get("semester", "").upper()
             if semester_query in semester:
                 score += 15
-
-        # EXACT QUERY MATCH
-        if query.lower() in doc.page_content.lower():
-            score += 10
 
         # COURSE CODE BOOST
         if metadata.get("course_code"):
@@ -78,14 +59,8 @@ def hybrid_search(query):
 
         filtered_docs.append((score, doc))
 
-    filtered_docs.sort(
-        key=lambda x: x[0],
-        reverse=True
-    )
+    filtered_docs.sort(key=lambda x: x[0], reverse=True)
 
-    final_docs = [
-        doc for score, doc in filtered_docs
-        if score > 0
-    ]
-
+    # Return top 4 documents safely
+    final_docs = [doc for score, doc in filtered_docs]
     return final_docs[:4]
