@@ -1,0 +1,21 @@
+langchain
+langchain-community
+langchain-core
+
+faiss-cpu
+
+sentence-transformers
+
+pypdf
+
+rank-bm25
+
+transformers
+
+torch
+
+streamlit
+
+python-dotenv
+
+pip install langchain-huggingface

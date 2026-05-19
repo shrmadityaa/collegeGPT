@@ -1,0 +1,38 @@
+import ollama
+
+from llm.prompts import SYSTEM_PROMPT
+
+
+MODEL_NAME = "phi3:mini"
+
+
+def generate_answer(query, docs):
+
+    context = "\n\n".join([
+        doc.page_content[:1200]
+        for doc in docs
+    ])
+
+    prompt = f"""
+{SYSTEM_PROMPT}
+
+SYLLABUS CONTEXT:
+{context}
+
+QUESTION:
+{query}
+
+FINAL ANSWER:
+"""
+
+    response = ollama.chat(
+        model=MODEL_NAME,
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    )
+
+    return response["message"]["content"]
