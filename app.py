@@ -1,91 +1,106 @@
+import re
+
 import streamlit as st
-from pathlib import Path
 
-from src.rag_chat import CollegeGPT
-from src.extractor.text_extraction import run_extraction
+from retrieval.hybrid import hybrid_search
+
+from llm.generator import generate_answer
 
 
-st.set_page_config(
-    page_title="CollegeGPT",
-    layout="wide"
-)
+st.set_page_config(page_title="CollegeGPT")
 
-st.title("🎓 CollegeGPT")
+st.title("CollegeGPT")
 
-st.markdown(
-    "Upload a syllabus PDF and ask questions from it."
-)
 
-# Upload PDF
-uploaded_file = st.file_uploader(
-    "Upload PDF",
-    type=["pdf"]
-)
+def detect_semester_query(query):
 
-if uploaded_file:
-
-    pdf_path = Path(
-        "data/raw_pdfs/uploaded.pdf"
+    match = re.search(
+        r"semester[- ]?(i|ii|iii|iv|v|vi|vii|viii|1|2|3|4|5|6|7|8)",
+        query,
+        re.IGNORECASE
     )
 
-    with open(pdf_path, "wb") as f:
-        f.write(uploaded_file.read())
+    if match:
+        return match.group(1).upper()
 
-    st.success("PDF uploaded successfully.")
+    return None
 
-    # Run extraction
-    output_path = (
-        "data/extracted_text/uploaded.txt"
-    )
 
-    run_extraction(
-        str(pdf_path),
-        output_path
-    )
+def format_subjects(docs, semester):
 
-    st.success(
-        "Text extracted successfully."
-    )
+    subjects = []
 
-    st.info(
-        "Embedding regeneration currently "
-        "needs manual execution."
-    )
+    seen = set()
 
-# Load chatbot
-@st.cache_resource
-def load_chatbot():
-    return CollegeGPT()
+    for doc in docs:
 
-chatbot = load_chatbot()
+        metadata = doc.metadata
 
-query = st.text_input(
-    "Ask a question"
-)
+        doc_semester = metadata.get(
+            "semester",
+            ""
+        ).upper()
 
-if st.button("Ask"):
+        if semester not in doc_semester:
+            continue
 
-    if query.strip():
+        subject = metadata.get(
+            "course_name",
+            ""
+        ).strip()
 
-        with st.spinner("Thinking..."):
+        if subject and subject not in seen:
 
-            result = chatbot.ask(query)
+            seen.add(subject)
+
+            subjects.append(subject)
+
+    return subjects
+
+
+query = st.text_input("Ask a question")
+
+
+if query:
+
+    semester_query = detect_semester_query(query)
+
+    docs = hybrid_search(query)
+
+    # SPECIAL HANDLING FOR SEMESTER SUBJECTS
+    if (
+        semester_query
+        and "subject" in query.lower()
+    ):
+
+        subjects = format_subjects(
+            docs,
+            semester_query
+        )
+
+        st.subheader(
+            f"Subjects in Semester {semester_query}"
+        )
+
+        if subjects:
+
+            for subject in subjects:
+                st.write(f"• {subject}")
+
+        else:
+            st.warning(
+                "No subjects found."
+            )
+
+    else:
+
+        with st.spinner("Generating answer..."):
+
+            answer = generate_answer(
+                query,
+                docs
+            )
 
         st.subheader("Answer")
 
-        st.write(result["answer"])
-
-        st.subheader("Retrieved Sources")
-
-        for i, source in enumerate(
-            result["sources"],
-            start=1
-        ):
-
-            with st.expander(
-                f"Source {i} - {source.get('course')}"
-            ):
-
-                st.write(
-                    source.get("text")
-                )
+        st.write(answer)
