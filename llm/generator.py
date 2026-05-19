@@ -32,7 +32,11 @@ FINAL ANSWER:
                 "role": "user",
                 "content": prompt
             }
-        ]
+        ],
+        options={
+            "temperature": 0.0,
+            "num_predict": 150 #OPTIONAL: acts as a hard limit on response length
+        }
     )
 
     return response["message"]["content"]
