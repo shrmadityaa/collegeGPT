@@ -269,6 +269,7 @@ def detect_semester_query(query):
     if not match:
         return None
     raw = match.group(1).upper()
+    # Normalise to roman numeral string
     if raw.isdigit():
         reverse = {v: k for k, v in ROMAN_MAP.items()}
         return reverse.get(int(raw), raw)
@@ -281,7 +282,7 @@ def format_subjects(docs, semester):
     for doc in docs:
         metadata = doc.metadata
         doc_semester = metadata.get("semester", "").upper()
-        if semester != doc_semester:          # ← exact match, not `in`
+        if semester not in doc_semester:
             continue
         subject = metadata.get("course_name", "").strip()
         if subject and subject not in seen:
