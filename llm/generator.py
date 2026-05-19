@@ -9,7 +9,7 @@ MODEL_NAME = "phi3:mini"
 def generate_answer(query, docs):
 
     context = "\n\n".join([
-        doc.page_content[:1200]
+        doc.page_content
         for doc in docs
     ])
 
