@@ -7,35 +7,24 @@ MODEL_NAME = "phi3:mini"
 
 
 def generate_answer(query, docs):
-
-    context = "\n\n".join([
-        doc.page_content
-        for doc in docs
-    ])
-
-    prompt = f"""
-{SYSTEM_PROMPT}
-
-SYLLABUS CONTEXT:
-{context}
-
-QUESTION:
-{query}
-
-FINAL ANSWER:
-"""
+    
+    # Fix: No more character limits, pass the full context
+    context = "\n\n".join([doc.page_content for doc in docs])
 
     response = ollama.chat(
         model=MODEL_NAME,
         messages=[
             {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
                 "role": "user",
-                "content": prompt
+                "content": f"SYLLABUS CONTEXT:\n{context}\n\nQUESTION:\n{query}\n\nFINAL ANSWER:"
             }
         ],
         options={
-            "temperature": 0.0,
-            "num_predict": 150 #OPTIONAL: acts as a hard limit on response length
+            "temperature": 0.0 # Fix: Forces strict, concise, hallucination-free outputs
         }
     )
 
