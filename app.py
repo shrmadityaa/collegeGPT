@@ -262,14 +262,13 @@ ROMAN_MAP = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VII
 
 def detect_semester_query(query):
     match = re.search(
-        r"semester[- ]?(i{1,3}|iv|vi{0,3}|viii|[1-8])",
+        r"semester[- ]?(viii|vii|vi|iv|v|iii|ii|i|[1-8])",
         query,
         re.IGNORECASE
     )
     if not match:
         return None
     raw = match.group(1).upper()
-    # Normalise to roman numeral string
     if raw.isdigit():
         reverse = {v: k for k, v in ROMAN_MAP.items()}
         return reverse.get(int(raw), raw)
@@ -282,7 +281,7 @@ def format_subjects(docs, semester):
     for doc in docs:
         metadata = doc.metadata
         doc_semester = metadata.get("semester", "").upper()
-        if semester not in doc_semester:
+        if semester != doc_semester:          # ← exact match, not `in`
             continue
         subject = metadata.get("course_name", "").strip()
         if subject and subject not in seen:
