@@ -258,11 +258,11 @@ footer { display: none !important; }
 
 
 # ------------------ HELPERS ------------------ #
-ROMAN_MAP = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8}
+ROMAN_MAP = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6, "VII": 7, "VIII": 8, "IX": 9}
 
 def detect_semester_query(query):
     match = re.search(
-        r"semester[- ]?(viii|vii|vi|iv|v|iii|ii|i|[1-8])",
+        r"semester[- ]?(ix|viii|vii|vi|iv|v|iii|ii|i|[1-9])",
         query,
         re.IGNORECASE
     )
@@ -342,47 +342,55 @@ with col2:
         placeholder="e.g. What are the subjects in semester 5?",
         label_visibility="collapsed"
     )
-
+    VALID_SEMESTERS = {"I", "II", "III", "IV", "V", "VI", "VII", "VIII"}
     if query:
         semester_query = detect_semester_query(query)
 
-        with st.spinner("Searching knowledge base…"):
-            docs = hybrid_search(query)
-
-        # ---------- SEMESTER SUBJECTS ----------
-        if semester_query and "subject" in query.lower():
-            subjects = format_subjects(docs, semester_query)
-            num = ROMAN_MAP.get(semester_query, semester_query)
-
+        if semester_query and semester_query not in VALID_SEMESTERS:
+            raw_match = re.search(r"semester[- ]?(ix|viii|vii|vi|iv|v|iii|ii|i|[1-9])", query, re.IGNORECASE)
+            raw_display = raw_match.group(1) if raw_match else semester_query
             st.markdown(
-                f'<div class="subject-label">📘 Semester {num} — {len(subjects)} subject{"s" if len(subjects) != 1 else ""}</div>',
-                unsafe_allow_html=True
+                f'<div class="answer-block">The syllabus does not contain information about courses offered specifically in Semester {raw_display}.</div>',
+            unsafe_allow_html=True
             )
+        else:
+            with st.spinner("Searching knowledge base…"):
+                docs = hybrid_search(query)
 
-            if subjects:
-                for i, subject in enumerate(subjects, 1):
-                    st.markdown(f"""
-                    <div class="subject-item">
-                        <div class="subject-dot"></div>
-                        <span>{subject}</span>
-                        <span class="subject-num">{i:02d}</span>
+            # ---------- SEMESTER SUBJECTS ----------
+            if semester_query and "subject" in query.lower():
+                subjects = format_subjects(docs, semester_query)
+                num = ROMAN_MAP.get(semester_query, semester_query)
+
+                st.markdown(
+                    f'<div class="subject-label">📘 Semester {num} — {len(subjects)} subject{"s" if len(subjects) != 1 else ""}</div>',
+                    unsafe_allow_html=True
+                )
+
+                if subjects:
+                    for i, subject in enumerate(subjects, 1):
+                        st.markdown(f"""
+                        <div class="subject-item">
+                            <div class="subject-dot"></div>
+                            <span>{subject}</span>
+                            <span class="subject-num">{i:02d}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <div class="empty-state">
+                        <div class="empty-icon">🔎</div>
+                        No subjects found for this semester.
                     </div>
                     """, unsafe_allow_html=True)
-            else:
-                st.markdown("""
-                <div class="empty-state">
-                    <div class="empty-icon">🔎</div>
-                    No subjects found for this semester.
-                </div>
-                """, unsafe_allow_html=True)
 
         # ---------- NORMAL QA ----------
-        else:
-            with st.spinner("Generating answer…"):
-                answer = generate_answer(query, docs)
+            else:
+                with st.spinner("Generating answer…"):
+                    answer = generate_answer(query, docs)
 
-            st.markdown('<div class="answer-label">🧠 Answer</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="answer-block">{answer}</div>', unsafe_allow_html=True)
+                st.markdown('<div class="answer-label">🧠 Answer</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="answer-block">{answer}</div>', unsafe_allow_html=True)
 
     else:
         st.markdown("""
