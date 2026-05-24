@@ -2,7 +2,16 @@ import re
 from typing import Iterable, List, Tuple
 
 from langchain_core.documents import Document
-from utils.syllabus import clean_course_name, resolve_course_metadata
+from utils.syllabus import (
+    clean_course_name,
+    detect_query_intents,
+    doc_mentions_course,
+    is_elective_query,
+    match_query_to_courses,
+    normalize_course_text,
+    resolve_course_metadata,
+    section_match_score,
+)
 
 FALLBACK_MESSAGE = "This information is not explicitly present in the uploaded syllabus."
 
@@ -27,6 +36,30 @@ ALLOWED_SYLLABUS_INTENT_WORDS = [
 ]
 
 COURSE_CODE_PATTERN = r"\bU[A-Z]{2,5}\d{3}\b|\bU[A-Z]{2,5}XXX\b"
+LAB_SECTION_TERMS = [
+    "laboratory work",
+    "lab experiment",
+    "lab experiments",
+    "laboratory experiment",
+    "laboratory experiments",
+    "practical work",
+    "practical",
+    "practicals",
+    "experiment",
+    "experiments",
+]
+LAB_QUERY_STOPWORDS = {
+    "lab",
+    "labs",
+    "laboratory",
+    "experiment",
+    "experiments",
+    "practical",
+    "practicals",
+    "work",
+    "included",
+    "include",
+}
 
 
 def normalize_text(text: str) -> str:
@@ -108,6 +141,9 @@ def exact_topic_present(query: str, docs: Iterable[Document]) -> bool:
     if has_semester and has_subject_word:
         return True
 
+    if is_elective_query(query) and docs:
+        return True
+
     important_terms = tokenize(query)
 
     if not important_terms:
@@ -115,17 +151,63 @@ def exact_topic_present(query: str, docs: Iterable[Document]) -> bool:
 
     return any(term in ctx for term in important_terms)
 
+
+def has_explicit_lab_grounding(
+    query: str,
+    docs: List[Document],
+    course_lookup=None,
+    course_name_index=None,
+) -> bool:
+    query_intents = detect_query_intents(query)
+    if "lab" not in query_intents:
+        return True
+
+    lab_docs = [
+        doc
+        for doc in docs
+        if any(term in normalize_course_text(doc.page_content) for term in LAB_SECTION_TERMS)
+    ]
+    if not lab_docs:
+        return False
+
+    course_matches = match_query_to_courses(query, course_lookup or {}, course_name_index)
+    exact_course_matches = [course for course in course_matches if course["score"] >= 80]
+    if exact_course_matches:
+        return any(
+            any(doc_mentions_course(doc, course_match) for course_match in exact_course_matches[:2])
+            for doc in lab_docs
+        )
+
+    explicit_context = normalize_course_text(context_text(lab_docs))
+    context_words = set(explicit_context.split())
+    topical_tokens = {
+        token
+        for token in tokenize(query)
+        if token not in LAB_QUERY_STOPWORDS
+    }
+    if not topical_tokens:
+        return True
+
+    return all(token in context_words for token in topical_tokens)
+
 def filter_relevant_docs(
     query: str,
     docs: List[Document],
     max_docs: int = 8,
     course_lookup=None,
+    course_name_index=None,
 ) -> List[Document]:
     if not docs:
         return []
 
     q_norm = normalize_text(query)
+    q_course_norm = normalize_course_text(query)
     q_tokens = tokenize(query)
+    query_intents = detect_query_intents(query)
+    elective_query = is_elective_query(query)
+    course_matches = match_query_to_courses(query, course_lookup or {}, course_name_index)
+    exact_course_matches = [course for course in course_matches if course["score"] >= 80]
+    exact_course_codes = {course["course_code"] for course in exact_course_matches[:2]}
     semester_match = re.search(
         r"\b(?:semester|sem)\s*(1|2|3|4|5|6|7|8|i|ii|iii|iv|v|vi|vii|viii)\b",
         q_norm,
@@ -168,13 +250,29 @@ def filter_relevant_docs(
         content_norm = normalize_text(doc.page_content)
         metadata = doc.metadata or {}
         score = 0.0
+        section_type = str(metadata.get("section_type") or "").lower()
 
         meta_course_code = str(resolved.get("course_code") or metadata.get("course_code") or "").upper()
         course_name_raw = clean_course_name(resolved.get("course_name") or metadata.get("course_name"))
         course_name_norm = normalize_text(course_name_raw)
+        course_page_match = any(doc_mentions_course(doc, match) for match in exact_course_matches[:2])
+
+        if elective_query and metadata.get("type") == "course" and resolved.get("code_type") != "PEC":
+            continue
+
+        if "pcc" in query_intents and metadata.get("type") == "course" and resolved.get("code_type") != "PCC":
+            continue
+
+        if exact_course_codes:
+            if meta_course_code in exact_course_codes:
+                score += 120
+            elif metadata.get("type") == "page" and course_page_match:
+                score += 60
+            else:
+                continue
 
         # Strongest rule: if user asks an exact course name, keep that course above topic-only matches.
-        if course_name_norm and course_name_norm in q_norm:
+        if course_name_norm and normalize_course_text(course_name_raw) in q_course_norm:
             score += 100
 
         if course_code:
@@ -185,8 +283,21 @@ def filter_relevant_docs(
         if q_tokens:
             score += len(q_tokens.intersection(doc_tokens)) / len(q_tokens) * 5
 
+        score += section_match_score(doc.page_content, query_intents)
+
+        if section_type == "lab" and "lab" in query_intents:
+            score += 12
+        if section_type == "evaluation" and "evaluation" in query_intents:
+            score += 12
+        if section_type == "clo" and "clo" in query_intents:
+            score += 10
+        if section_type == "overview" and query_intents.intersection({"overview", "credits"}):
+            score += 8
+        if section_type == "syllabus" and "syllabus" in query_intents:
+            score += 10
+
         # Penalize page chunks that merely mention words like "operating systems" in another course.
-        if metadata.get("type") == "page" and course_name_norm not in q_norm:
+        if metadata.get("type") == "page" and not course_page_match and course_name_norm not in q_norm:
             score -= 1
 
         if score > 0:
@@ -195,22 +306,23 @@ def filter_relevant_docs(
     scored.sort(key=lambda x: x[0], reverse=True)
 
     # If there is an exact course/code match, discard unrelated courses/pages.
-    exact_course_codes = {
-        str(doc.metadata.get("course_code") or "").upper()
-        for score, doc in scored
-        if score >= 90 and doc.metadata.get("course_code")
-    }
     if exact_course_codes:
         filtered = [
             doc for score, doc in scored
-            if str(doc.metadata.get("course_code") or "").upper() in exact_course_codes
+            if str((resolve_course_metadata(doc, course_lookup or {}).get("course_code") or "")).upper() in exact_course_codes
+            or any(doc_mentions_course(doc, match) for match in exact_course_matches[:2])
         ]
         return filtered[:max_docs]
 
     return [doc for _, doc in scored[:max_docs]]
 
 
-def validate_query_and_docs(query: str, docs: List[Document]) -> Tuple[bool, str]:
+def validate_query_and_docs(
+    query: str,
+    docs: List[Document],
+    course_lookup=None,
+    course_name_index=None,
+) -> Tuple[bool, str]:
     blocked, message = is_blocked_query(query)
     if blocked:
         return False, message
@@ -226,6 +338,14 @@ def validate_query_and_docs(query: str, docs: List[Document]) -> Tuple[bool, str
 
     overlap = query_context_overlap(query, docs)
     if overlap < 0.10:
+        return False, FALLBACK_MESSAGE
+
+    if not has_explicit_lab_grounding(
+        query,
+        docs,
+        course_lookup=course_lookup,
+        course_name_index=course_name_index,
+    ):
         return False, FALLBACK_MESSAGE
 
     return True, ""

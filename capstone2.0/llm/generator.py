@@ -9,10 +9,66 @@ from guardrails import (
 )
 from llm.prompts import SYSTEM_PROMPT
 from retrieval.bm25_retriever import get_all_chunks
-from utils.syllabus import build_semester_course_catalog, resolve_course_metadata
+from utils.syllabus import (
+    build_course_name_index,
+    build_elective_catalog,
+    build_semester_course_catalog,
+    collect_ai_related_subjects,
+    extract_focus_areas,
+    format_semester_label,
+    is_ai_curriculum_query,
+    is_focus_area_query,
+    resolve_course_metadata,
+)
 
 MODEL_NAME = "phi3:mini"
-_, COURSE_LOOKUP = build_semester_course_catalog(get_all_chunks())
+ALL_CHUNKS = get_all_chunks()
+SEMESTER_COURSES, COURSE_LOOKUP = build_semester_course_catalog(ALL_CHUNKS)
+COURSE_NAME_INDEX = build_course_name_index(COURSE_LOOKUP)
+ELECTIVE_CATALOG = build_elective_catalog(ALL_CHUNKS)
+
+
+def _answer_ai_curriculum_query():
+    core_subjects, elective_subjects = collect_ai_related_subjects(
+        SEMESTER_COURSES,
+        ELECTIVE_CATALOG,
+    )
+
+    if not core_subjects and not elective_subjects:
+        return FALLBACK_MESSAGE
+
+    lines = ["### AI-Related Subjects in the Curriculum", ""]
+
+    if core_subjects:
+        lines.append("**Core Curriculum**")
+        for row in core_subjects:
+            lines.append(
+                f"- **{row['course_code']}** {clean_course_name(row['course_name'])} "
+                f"({format_semester_label(row['semester'])})"
+            )
+        lines.append("")
+
+    if elective_subjects:
+        lines.append("**Related Professional Electives**")
+        for row in elective_subjects:
+            lines.append(
+                f"- **{row['course_code']}** {clean_course_name(row['course_name'])} "
+                f"(Elective {row['slot']})"
+            )
+
+    return "\n".join(lines).strip()
+
+
+def _answer_focus_area_query():
+    focus_areas = extract_focus_areas(ALL_CHUNKS)
+    if not focus_areas:
+        return FALLBACK_MESSAGE
+
+    lines = ["### Focus Areas After Semester IV", ""]
+    for item in focus_areas:
+        lines.append(f"- {item['name']}")
+
+    return "\n".join(lines)
 
 
 def _restrict_to_exact_course_if_possible(query, docs):
@@ -106,9 +162,20 @@ def _clean_answer(answer):
 
 
 def generate_answer(query, docs):
+    if is_ai_curriculum_query(query):
+        return _answer_ai_curriculum_query()
+
+    if is_focus_area_query(query):
+        return _answer_focus_area_query()
+
     docs = _restrict_to_exact_course_if_possible(query, docs)
 
-    is_valid, message = validate_query_and_docs(query, docs)
+    is_valid, message = validate_query_and_docs(
+        query,
+        docs,
+        course_lookup=COURSE_LOOKUP,
+        course_name_index=COURSE_NAME_INDEX,
+    )
     if not is_valid:
         return message or FALLBACK_MESSAGE
 
@@ -124,15 +191,18 @@ Use ONLY the syllabus context below.
 Strict rules:
 1. Do not use outside knowledge.
 2. Do not guess or infer beyond the given context.
-3. If information is missing, output only:
+3. Never generate inferred academic content outside the retrieved syllabus context.
+4. If information is missing, output only:
 {FALLBACK_MESSAGE}
-4. Source 1 is the most relevant source.
-5. If the question asks for a course syllabus, answer from the matching course source only.
-6. Do not combine information from another course that only mentions similar words.
-7. Do not write one long paragraph.
-8. Keep the answer clean, structured, and readable.
-9. Fix only obvious PDF extraction spelling issues.
-10. Do not invent unit names, books, labs, credits, or outcomes.
+5. Source 1 is the most relevant source.
+6. If the question asks for a course syllabus, answer from the matching course source only.
+7. Do not combine information from another course that only mentions similar words.
+8. Do not write one long paragraph.
+9. Keep the answer clean, structured, and readable.
+10. Fix only obvious PDF extraction spelling issues.
+11. Do not invent unit names, books, labs, credits, or outcomes.
+12. For lab, practical, or experiment questions, if explicit matching content is absent, output only:
+{FALLBACK_MESSAGE}
 
 Required answer format:
 
@@ -190,6 +260,12 @@ FINAL ANSWER:
         "outside the context",
         "as an ai",
         "i don't have access",
+        "it can be inferred",
+        "reasonable inference",
+        "likely includes",
+        "based on common college structures",
+        "based on common syllabus structures",
+        "common syllabus structures",
     ]
 
     if any(phrase in lower for phrase in unsafe_phrases):

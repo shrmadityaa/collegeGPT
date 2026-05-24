@@ -29,7 +29,9 @@ SEMESTER_HEADER_PATTERN = re.compile(
     r"\bSEMESTER[-\s]*(VIII|VII|VI|V|IV|III|II|I|8|7|6|5|4|3|2|1)\b",
     re.IGNORECASE,
 )
+ELECTIVE_SLOT_PATTERN = re.compile(r"\bElective\s*(I|II|III|IV|1|2|3|4)\b", re.IGNORECASE)
 VALID_COURSE_CODE_PATTERN = re.compile(r"^U[A-Z]{2,5}\d{3}$")
+COURSE_CODE_OR_PLACEHOLDER_PATTERN = re.compile(r"^U[A-Z]{2,5}(?:\d{3}|XXX)$")
 COURSE_CODE_PATTERN = re.compile(r"\bU[A-Z]{2,5}(?:\d{3}|XXX)\b", re.IGNORECASE)
 COURSE_ROW_PATTERN = re.compile(
     r"\b\d+\.?\s+"
@@ -43,6 +45,95 @@ CREDITS_PATTERN = re.compile(
     r"\bL\s*T\s*P\s*Cr\s*([0-9*-]+)\s+([0-9*-]+)\s+([0-9*-]+)\s+([0-9.]+)\b",
     re.IGNORECASE,
 )
+
+COURSE_ALIAS_MAP = {
+    "UCS303": ["operating systems", "os"],
+    "UCS310": ["dbms", "database management system"],
+    "UCS414": ["computer network", "cn"],
+    "UML501": ["ml"],
+    "UTA018": ["oop", "oops"],
+}
+
+COURSE_TEXT_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "of",
+    "to",
+    "in",
+    "with",
+    "on",
+    "an",
+    "a",
+}
+
+ELECTIVE_TOPIC_KEYWORDS = {
+    "ai": [
+        "ai",
+        "artificial intelligence",
+        "machine learning",
+        "deep learning",
+        "computer vision",
+        "nlp",
+        "natural language processing",
+        "conversational ai",
+        "generative ai",
+        "agentic ai",
+        "speech processing",
+        "robotics",
+        "edge ai",
+        "reinforcement learning",
+        "data science",
+    ],
+    "cyber_security": [
+        "cyber security",
+        "cybersecurity",
+        "security",
+        "ethical hacking",
+        "secure coding",
+        "cyber forensics",
+        "forensic",
+        "blockchain",
+        "network defence",
+        "network defense",
+        "computer network security",
+        "hacking",
+    ],
+}
+
+AI_CURRICULUM_KEYWORDS = [
+    "ai",
+    "artificial intelligence",
+    "machine learning",
+    "agentic ai",
+    "intelligent systems",
+    "nlp",
+    "natural language processing",
+    "robotics",
+    "computer vision",
+    "data science",
+    "data analytics",
+    "deep learning",
+    "generative ai",
+    "conversational ai",
+]
+
+SEMESTER_SUBJECT_INVALID_PATTERNS = [
+    "STARTS PRJ",
+    "GENERIC ELECTIVE",
+    "START-UP",
+    "PROJECT SEMESTER",
+]
+
+SEMESTER_SUBJECT_TABLE_FRAGMENTS = [
+    "TOTAL",
+    "GENERIC ELECTIVE",
+    "STARTS PRJ",
+    "L T P",
+    "PRJ",
+    "PEC",
+    "OEC",
+]
 
 
 def normalize_semester_token(value):
@@ -72,14 +163,211 @@ def clean_course_name(name):
     return name.strip()
 
 
+def normalize_course_text(text):
+    text = clean_course_name(text).lower()
+    text = text.replace("&", " and ")
+    text = text.replace("/", " ")
+    text = re.sub(r"[^a-z0-9+]+", " ", text)
+    words = []
+
+    for word in text.split():
+        if word.endswith("ies") and len(word) > 4:
+            word = word[:-3] + "y"
+        elif word.endswith("s") and len(word) > 4 and not word.endswith("ss"):
+            word = word[:-1]
+        words.append(word)
+
+    return " ".join(words)
+
+
+def tokenize_course_text(text):
+    return {
+        word
+        for word in normalize_course_text(text).split()
+        if len(word) >= 2 and word not in COURSE_TEXT_STOPWORDS
+    }
+
+
 def is_valid_course_code(course_code):
     return bool(VALID_COURSE_CODE_PATTERN.fullmatch(str(course_code or "").upper()))
+
+
+def is_course_code_or_placeholder(course_code):
+    return bool(COURSE_CODE_OR_PLACEHOLDER_PATTERN.fullmatch(str(course_code or "").upper()))
 
 
 def normalize_overview_text(text):
     text = str(text or "")
     text = re.sub(r"(\d)\.\s+(\d)", r"\1.\2", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def detect_query_intents(query):
+    q_norm = normalize_course_text(query)
+    q_tokens = set(q_norm.split())
+    intents = set()
+
+    if any(word in q_norm for word in ["credit", "ltp", "credit structure", "credit of"]):
+        intents.add("credits")
+    if any(word in q_norm for word in ["lab", "laboratory", "practical", "experiment"]):
+        intents.add("lab")
+    if any(word in q_norm for word in ["evaluation", "weightage", "marks", "mst", "est", "assessment"]):
+        intents.add("evaluation")
+    if any(word in q_norm for word in ["outcome", "outcomes", "objective", "objectives"]) or {"clo", "clos", "cos"} & q_tokens:
+        intents.add("clo")
+    if any(word in q_norm for word in ["syllabus", "topic", "topics", "module", "modules"]):
+        intents.add("syllabus")
+    if any(word in q_norm for word in ["overview", "summary", "summarize", "short overview"]):
+        intents.add("overview")
+    if "elective" in q_norm:
+        intents.add("elective")
+    if "pcc" in q_norm or "professional core" in q_norm:
+        intents.add("pcc")
+
+    if not intents:
+        intents.add("overview")
+
+    return intents
+
+
+def detect_elective_slot(query):
+    match = ELECTIVE_SLOT_PATTERN.search(str(query or ""))
+    if not match:
+        return None
+
+    raw_value = match.group(1).upper()
+    numeric_map = {"1": "I", "2": "II", "3": "III", "4": "IV"}
+    return numeric_map.get(raw_value, raw_value)
+
+
+def detect_elective_topic(query):
+    q_norm = normalize_course_text(query)
+
+    for topic, keywords in ELECTIVE_TOPIC_KEYWORDS.items():
+        for keyword in keywords:
+            if text_matches_keyword(q_norm, normalize_course_text(keyword)):
+                return topic
+
+    return None
+
+
+def is_elective_query(query):
+    return "elective" in normalize_course_text(query)
+
+
+def is_pcc_list_query(query):
+    q_norm = normalize_course_text(query)
+    has_pcc = "pcc" in q_norm or "professional core" in q_norm
+    has_list_intent = any(word in q_norm for word in ["list", "subject", "course", "semester wise", "semester wise"])
+    return has_pcc and has_list_intent
+
+
+def is_credit_query(query):
+    q_norm = normalize_course_text(query)
+    return "credit" in q_norm or "ltp" in q_norm
+
+
+def is_ai_curriculum_query(query):
+    q_norm = normalize_course_text(query)
+    has_curriculum_intent = any(
+        phrase in q_norm
+        for phrase in [
+            "curriculum",
+            "subject",
+            "subjects",
+            "course",
+            "courses",
+        ]
+    )
+    has_ai_term = any(
+        text_matches_keyword(q_norm, normalize_course_text(keyword))
+        for keyword in AI_CURRICULUM_KEYWORDS
+    )
+    return has_curriculum_intent and has_ai_term
+
+
+def is_focus_area_query(query):
+    q_norm = normalize_course_text(query)
+    has_focus_intent = any(
+        phrase in q_norm
+        for phrase in [
+            "focus area",
+            "focus areas",
+            "specialization",
+            "specializations",
+            "pathway",
+            "pathways",
+            "elective focus",
+        ]
+    )
+    has_semester_iv = any(
+        phrase in q_norm
+        for phrase in [
+            "semester iv",
+            "semester 4",
+            "sem iv",
+            "sem 4",
+            "after semester iv",
+            "after semester 4",
+        ]
+    )
+    return has_focus_intent and has_semester_iv
+
+
+def format_semester_label(semester):
+    semester = str(semester or "").strip().upper()
+    if not semester.startswith("SEMESTER-"):
+        return semester.title()
+
+    roman = semester.split("-", 1)[1].upper()
+    return f"Semester {roman}"
+
+
+def is_pcc_listing_row(semester, row):
+    code_type = str((row or {}).get("code_type") or "").upper()
+    semester = str(semester or "").upper()
+
+    if code_type == "PCC":
+        return True
+
+    if semester in {"SEMESTER-I", "SEMESTER-II"} and code_type in {"BSC", "ESC", "HSS", "OTH"}:
+        return True
+
+    return False
+
+
+def is_valid_semester_subject_row(row):
+    row = row or {}
+    course_name = clean_course_name(row.get("course_name"))
+    course_name_upper = course_name.upper()
+
+    if not course_name:
+        return False
+
+    if any(pattern in course_name_upper for pattern in SEMESTER_SUBJECT_INVALID_PATTERNS):
+        return False
+
+    numeric_tokens = re.findall(r"\b\d+(?:\.\d+)?\b", course_name)
+    word_tokens = re.findall(r"[A-Za-z][A-Za-z&'\-]*", course_name)
+    fragment_hits = sum(
+        1 for fragment in SEMESTER_SUBJECT_TABLE_FRAGMENTS
+        if fragment in course_name_upper
+    )
+
+    if len(numeric_tokens) >= 4:
+        return False
+
+    if len(word_tokens) > 8 and (len(numeric_tokens) >= 2 or fragment_hits >= 2):
+        return False
+
+    if fragment_hits >= 2 and numeric_tokens:
+        return False
+
+    return True
+
+
+def filter_valid_subject_rows(rows):
+    return [row for row in rows if is_valid_semester_subject_row(row)]
 
 
 def split_semester_sections(text):
@@ -108,6 +396,8 @@ def extract_semester_courses(section_text):
     for match in COURSE_ROW_PATTERN.finditer(normalized):
         course_code = match.group(1).upper()
         course_name = clean_course_name(match.group(2))
+        code_type = match.group(3).upper()
+
         if not is_valid_course_code(course_code) or not course_name:
             continue
 
@@ -121,6 +411,7 @@ def extract_semester_courses(section_text):
             {
                 "course_code": course_code,
                 "course_name": course_name,
+                "code_type": code_type,
                 "ltp": f"{l_val}-{t_val}-{p_val}",
                 "credits": credits,
             }
@@ -153,6 +444,265 @@ def build_semester_course_catalog(docs):
     return dict(semester_courses), course_lookup
 
 
+def split_elective_sections(text):
+    normalized = normalize_overview_text(text)
+    matches = list(ELECTIVE_SLOT_PATTERN.finditer(normalized))
+    sections = []
+
+    for index, match in enumerate(matches):
+        slot = detect_elective_slot(match.group(0))
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
+        sections.append((slot, normalized[start:end]))
+
+    return sections
+
+
+def build_elective_catalog(docs):
+    electives = []
+    seen = set()
+
+    for doc in docs:
+        metadata = getattr(doc, "metadata", {}) or {}
+        if metadata.get("type") != "page":
+            continue
+
+        page_text = getattr(doc, "page_content", "")
+        for slot, section in split_elective_sections(page_text):
+            for match in COURSE_ROW_PATTERN.finditer(section):
+                course_code = match.group(1).upper()
+                course_name = clean_course_name(match.group(2))
+                code_type = match.group(3).upper()
+
+                if code_type != "PEC" or not is_course_code_or_placeholder(course_code) or not course_name:
+                    continue
+
+                key = (slot, course_code)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                l_val, t_val, p_val, credits = (match.group(i).strip() for i in range(4, 8))
+                electives.append(
+                    {
+                        "slot": slot,
+                        "course_code": course_code,
+                        "course_name": course_name,
+                        "code_type": code_type,
+                        "semester": metadata.get("semester"),
+                        "ltp": f"{l_val}-{t_val}-{p_val}",
+                        "credits": credits,
+                    }
+                )
+
+    return electives
+
+
+def is_ai_related_name(name):
+    name_norm = normalize_course_text(name)
+    return any(
+        text_matches_keyword(name_norm, normalize_course_text(keyword))
+        for keyword in AI_CURRICULUM_KEYWORDS
+    )
+
+
+def collect_ai_related_subjects(semester_courses, elective_catalog):
+    core_subjects = []
+    elective_subjects = []
+    seen_core = set()
+    seen_elective = set()
+    semester_order = {
+        "SEMESTER-I": 1,
+        "SEMESTER-II": 2,
+        "SEMESTER-III": 3,
+        "SEMESTER-IV": 4,
+        "SEMESTER-V": 5,
+        "SEMESTER-VI": 6,
+        "SEMESTER-VII": 7,
+        "SEMESTER-VIII": 8,
+    }
+    slot_order = {"I": 1, "II": 2, "III": 3, "IV": 4}
+
+    for semester, rows in semester_courses.items():
+        for row in rows:
+            if not is_valid_semester_subject_row(row):
+                continue
+            if not is_ai_related_name(row.get("course_name")):
+                continue
+
+            key = row["course_code"]
+            if key in seen_core:
+                continue
+            seen_core.add(key)
+            core_subjects.append({**row, "semester": semester})
+
+    for row in elective_catalog:
+        if not is_ai_related_name(row.get("course_name")):
+            continue
+
+        key = (row["slot"], row["course_code"])
+        if key in seen_elective:
+            continue
+        seen_elective.add(key)
+        elective_subjects.append(row)
+
+    core_subjects.sort(key=lambda row: (semester_order.get(row["semester"], 99), row["course_code"]))
+    elective_subjects.sort(key=lambda row: (slot_order.get(row["slot"], 99), row["course_code"]))
+    return core_subjects, elective_subjects
+
+
+def get_focus_area_page_docs(docs):
+    page_docs = [
+        doc for doc in docs
+        if (getattr(doc, "metadata", {}) or {}).get("type") == "page"
+    ]
+    start_page = None
+
+    for doc in page_docs:
+        text_lower = str(getattr(doc, "page_content", "")).lower()
+        if "elective focus" in text_lower:
+            start_page = (getattr(doc, "metadata", {}) or {}).get("page")
+            break
+
+    if start_page is not None:
+        return [
+            doc for doc in page_docs
+            if (getattr(doc, "metadata", {}) or {}).get("page") in {start_page, start_page + 1}
+        ]
+
+    return [
+        doc for doc in page_docs
+        if "elective focus" in str(getattr(doc, "page_content", "")).lower()
+    ]
+
+
+def clean_focus_area_name(name):
+    name = clean_course_name(name)
+    replacements = {
+        "High Performan Computing": "High Performance Computing",
+    }
+    return replacements.get(name, name)
+
+
+def extract_focus_areas(docs):
+    focus_docs = get_focus_area_page_docs(docs)
+    if not focus_docs:
+        return []
+
+    focus_text = " ".join(str(getattr(doc, "page_content", "")) for doc in focus_docs)
+    pattern = re.compile(r"(?:^|\s)(\d{1,2})\.\s(.+?)(?=\s\d{1,2}\.\d)", re.IGNORECASE)
+    seen = set()
+    focus_areas = []
+
+    for match in pattern.finditer(focus_text):
+        index = match.group(1)
+        name = clean_focus_area_name(match.group(2))
+        key = (index, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        focus_areas.append({"index": index, "name": name})
+
+    focus_areas.sort(key=lambda item: int(item["index"]))
+    return focus_areas
+
+
+def build_course_name_index(course_lookup):
+    index = []
+
+    for course_code, course in course_lookup.items():
+        course_name = clean_course_name(course.get("course_name"))
+        normalized_name = normalize_course_text(course_name)
+        if not normalized_name:
+            continue
+
+        variants = {normalized_name}
+        for alias in COURSE_ALIAS_MAP.get(course_code, []):
+            alias_norm = normalize_course_text(alias)
+            if alias_norm:
+                variants.add(alias_norm)
+
+        index.append(
+            {
+                "course_code": course_code,
+                "course_name": course_name,
+                "semester": course.get("semester"),
+                "code_type": course.get("code_type"),
+                "normalized_name": normalized_name,
+                "tokens": tokenize_course_text(course_name),
+                "variants": sorted(variants, key=lambda item: (-len(item), item)),
+            }
+        )
+
+    return index
+
+
+def match_query_to_courses(query, course_lookup, course_name_index=None):
+    q_norm = normalize_course_text(query)
+    q_tokens = tokenize_course_text(query)
+    semester_query = detect_query_semester(query)
+    course_name_index = course_name_index or build_course_name_index(course_lookup)
+
+    matches = []
+
+    for course in course_name_index:
+        score = 0
+        matched_variant = None
+
+        for variant in course["variants"]:
+            if variant and text_matches_keyword(q_norm, variant):
+                matched_variant = variant
+                score = 120 + len(variant.split())
+                break
+
+        if not score and course["tokens"]:
+            overlap = len(course["tokens"].intersection(q_tokens))
+            token_ratio = overlap / len(course["tokens"])
+
+            if overlap >= 2 and token_ratio >= 0.75:
+                score = 80 + overlap
+                matched_variant = course["normalized_name"]
+
+        if score:
+            if semester_query and course.get("semester") == semester_query:
+                score += 5
+
+            matches.append(
+                {
+                    **course,
+                    "score": score,
+                    "matched_variant": matched_variant,
+                }
+            )
+
+    matches.sort(key=lambda item: (-item["score"], item["course_code"]))
+    return matches
+
+
+def filter_electives_for_query(query, electives):
+    slot = detect_elective_slot(query)
+    topic = detect_elective_topic(query)
+    q_norm = normalize_course_text(query)
+    filtered = []
+
+    for elective in electives:
+        if slot and elective.get("slot") != slot:
+            continue
+
+        if topic:
+            name_norm = normalize_course_text(elective.get("course_name"))
+            keywords = [normalize_course_text(keyword) for keyword in ELECTIVE_TOPIC_KEYWORDS[topic]]
+            if not any(text_matches_keyword(name_norm, keyword) for keyword in keywords):
+                continue
+
+        if not slot and not topic and "related to" in q_norm:
+            continue
+
+        filtered.append(elective)
+
+    return filtered if filtered else electives if not slot and not topic else []
+
+
 def extract_credit_details(text):
     match = CREDITS_PATTERN.search(str(text or ""))
     if not match:
@@ -165,19 +715,93 @@ def extract_credit_details(text):
     }
 
 
+def text_matches_keyword(text_norm, keyword_norm):
+    if not keyword_norm:
+        return False
+
+    if " " in keyword_norm:
+        return keyword_norm in text_norm
+
+    return keyword_norm in set(text_norm.split())
+
+
 def resolve_course_metadata(doc, course_lookup):
     metadata = getattr(doc, "metadata", {}) or {}
     course_code = str(metadata.get("course_code") or "").upper()
     resolved = course_lookup.get(course_code, {})
+    credit_details = extract_credit_details(getattr(doc, "page_content", "")) or {}
 
     course_name = clean_course_name(resolved.get("course_name") or metadata.get("course_name"))
     semester = resolved.get("semester") or metadata.get("semester")
-    credit_details = extract_credit_details(getattr(doc, "page_content", "")) or {}
+    code_type = resolved.get("code_type") or metadata.get("code_type")
 
     return {
         "course_code": course_code or None,
         "course_name": course_name or None,
         "semester": semester,
+        "code_type": code_type,
         "ltp": credit_details.get("ltp") or resolved.get("ltp"),
         "credits": credit_details.get("credits") or resolved.get("credits"),
     }
+
+
+def doc_mentions_course(doc, course_match):
+    if not course_match:
+        return False
+
+    text = normalize_course_text(getattr(doc, "page_content", ""))
+    course_code = str(course_match.get("course_code") or "").upper()
+
+    if course_code and course_code.lower() in text:
+        return True
+
+    for variant in course_match.get("variants", []):
+        if variant and variant in text:
+            return True
+
+    return False
+
+
+def section_match_score(text, intents):
+    score = 0
+    text_norm = normalize_course_text(text)
+
+    if "credits" in intents and "l t p cr" in text_norm:
+        score += 16
+    if "syllabus" in intents and "syllabus" in text_norm:
+        score += 14
+    if "overview" in intents and ("course objective" in text_norm or "course objectives" in text_norm):
+        score += 10
+    if "clo" in intents and any(
+        phrase in text_norm
+        for phrase in [
+            "course learning objective",
+            "course learning outcome",
+            "course objective",
+            "course objectives",
+        ]
+    ):
+        score += 14
+    if "lab" in intents and any(
+        phrase in text_norm
+        for phrase in [
+            "laboratory work",
+            "lab experiment",
+            "practical work",
+            "laboratory experiment",
+        ]
+    ):
+        score += 18
+    if "evaluation" in intents and any(
+        phrase in text_norm
+        for phrase in [
+            "evaluation scheme",
+            "weightage",
+            "sessional",
+            "mst",
+            "est",
+        ]
+    ):
+        score += 18
+
+    return score

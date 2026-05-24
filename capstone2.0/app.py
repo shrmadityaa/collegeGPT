@@ -8,10 +8,28 @@ from retrieval.hybrid import hybrid_search
 from llm.generator import generate_answer
 from guardrails import FALLBACK_MESSAGE
 from utils.syllabus import (
+    build_course_name_index,
+    build_elective_catalog,
     build_semester_course_catalog,
     clean_course_name,
+    collect_ai_related_subjects,
+    detect_elective_slot,
+    detect_elective_topic,
     detect_query_semester,
+    extract_focus_areas,
+    filter_electives_for_query,
+    filter_valid_subject_rows,
+    format_semester_label,
+    is_ai_curriculum_query,
+    is_credit_query,
+    is_elective_query,
+    is_focus_area_query,
+    is_pcc_listing_row,
+    is_pcc_list_query,
     is_valid_course_code,
+    is_valid_semester_subject_row,
+    match_query_to_courses,
+    normalize_course_text,
 )
 
 
@@ -203,6 +221,15 @@ def load_all_chunks():
     except Exception:
         return []
 
+
+@st.cache_data(show_spinner=False)
+def load_catalog_data():
+    chunks = load_all_chunks()
+    semester_courses, course_lookup = build_semester_course_catalog(chunks)
+    course_name_index = build_course_name_index(course_lookup)
+    elective_catalog = build_elective_catalog(chunks)
+    return semester_courses, course_lookup, course_name_index, elective_catalog
+
 def detect_semester(query):
     return detect_query_semester(query)
 
@@ -227,6 +254,144 @@ def extract_courses_from_text(text):
         courses.append((code, name))
     return courses
 
+
+def is_elective_listing_query(query):
+    q_norm = normalize_course_text(query)
+    return is_elective_query(query) and any(
+        phrase in q_norm for phrase in ["list", "subject", "subjects", "summarize", "summary", "related"]
+    )
+
+
+def answer_course_credit_query(query):
+    _, course_lookup, course_name_index, _ = load_catalog_data()
+
+    semester = detect_semester(query)
+    matches = [
+        match
+        for match in match_query_to_courses(query, course_lookup, course_name_index)
+        if match["score"] >= 80
+    ]
+
+    if semester:
+        matches = [match for match in matches if match.get("semester") == semester]
+
+    if not matches:
+        return FALLBACK_MESSAGE
+
+    course = matches[0]
+    if not course.get("credits"):
+        return FALLBACK_MESSAGE
+
+    semester_label = format_semester_label(course.get("semester"))
+    return (
+        f"### Credit Structure for {course['course_name']}\n\n"
+        f"- **Course Code:** {course['course_code']}\n"
+        f"- **Semester:** {semester_label}\n"
+        f"- **L-T-P:** {course.get('ltp') or 'Not mentioned'}\n"
+        f"- **Credits:** {course.get('credits') or 'Not mentioned'}"
+    )
+
+
+def answer_elective_query(query):
+    _, _, _, elective_catalog = load_catalog_data()
+    entries = filter_electives_for_query(query, elective_catalog)
+    if not entries:
+        return FALLBACK_MESSAGE
+
+    slot = detect_elective_slot(query)
+    topic = detect_elective_topic(query)
+    slot_order = {"I": 1, "II": 2, "III": 3, "IV": 4}
+    entries = sorted(entries, key=lambda item: (slot_order.get(item["slot"], 99), item["course_code"]))
+
+    if slot:
+        heading = f"### Elective {slot} Subjects"
+    elif topic == "ai":
+        heading = "### AI-Related Electives"
+    elif topic == "cyber_security":
+        heading = "### Cyber Security Electives"
+    else:
+        heading = "### Professional Electives"
+
+    lines = [heading, ""]
+    for entry in entries:
+        suffix = "" if slot else f" (Elective {entry['slot']})"
+        lines.append(f"- **{entry['course_code']}** {entry['course_name']}{suffix}")
+
+    return "\n".join(lines)
+
+
+def answer_pcc_subjects(query):
+    semester_courses, _, _, _ = load_catalog_data()
+    semester = detect_semester(query)
+    semester_order = [
+        "SEMESTER-I",
+        "SEMESTER-II",
+        "SEMESTER-III",
+        "SEMESTER-IV",
+        "SEMESTER-V",
+        "SEMESTER-VI",
+        "SEMESTER-VII",
+        "SEMESTER-VIII",
+    ]
+
+    target_semesters = [semester] if semester else semester_order
+    lines = ["### PCC Subjects Semester-wise", ""]
+
+    for sem in target_semesters:
+        pcc_rows = [
+            row for row in semester_courses.get(sem, [])
+            if is_pcc_listing_row(sem, row)
+        ]
+        if not pcc_rows:
+            continue
+
+        lines.append(f"**{format_semester_label(sem)}**")
+        for row in pcc_rows:
+            lines.append(f"- **{row['course_code']}** {clean_course_name(row['course_name'])}")
+        lines.append("")
+
+    response = "\n".join(line for line in lines if line is not None).strip()
+    return response if response != "### PCC Subjects Semester-wise" else FALLBACK_MESSAGE
+
+
+def answer_ai_curriculum_subjects(query):
+    semester_courses, _, _, elective_catalog = load_catalog_data()
+    core_subjects, elective_subjects = collect_ai_related_subjects(semester_courses, elective_catalog)
+
+    if not core_subjects and not elective_subjects:
+        return FALLBACK_MESSAGE
+
+    lines = ["### AI-Related Subjects in the Curriculum", ""]
+
+    if core_subjects:
+        lines.append("**Core Curriculum**")
+        for row in core_subjects:
+            lines.append(
+                f"- **{row['course_code']}** {clean_course_name(row['course_name'])} ({format_semester_label(row['semester'])})"
+            )
+        lines.append("")
+
+    if elective_subjects:
+        lines.append("**Related Professional Electives**")
+        for row in elective_subjects:
+            lines.append(
+                f"- **{row['course_code']}** {clean_course_name(row['course_name'])} (Elective {row['slot']})"
+            )
+
+    return "\n".join(lines).strip()
+
+
+def answer_focus_areas(query):
+    focus_areas = extract_focus_areas(load_all_chunks())
+    if not focus_areas:
+        return FALLBACK_MESSAGE
+
+    lines = ["### Focus Areas After Semester IV", ""]
+    for item in focus_areas:
+        lines.append(f"- {item['name']}")
+
+    return "\n".join(lines)
+
 def answer_semester_subjects(query):
     semester = detect_semester(query)
     if not semester:
@@ -237,7 +402,7 @@ def answer_semester_subjects(query):
         return FALLBACK_MESSAGE
 
     semester_courses, course_lookup = build_semester_course_catalog(chunks)
-    course_rows = semester_courses.get(semester, [])
+    course_rows = filter_valid_subject_rows(semester_courses.get(semester, []))
     if not course_rows:
         return FALLBACK_MESSAGE
 
@@ -267,13 +432,13 @@ def answer_semester_subjects(query):
 
         seen.add(course_code)
         subject_name = clean_course_name(row.get("course_name"))
-        if subject_name:
+        if subject_name and is_valid_semester_subject_row(row):
             subjects.append(f"- **{course_code}** {subject_name}")
 
     if not subjects:
         return FALLBACK_MESSAGE
 
-    header = semester.replace("-", " ").title()
+    header = format_semester_label(semester)
     return f"### Subjects in {header}:\n\n" + "\n".join(subjects)
 
 # =========================================================
@@ -286,10 +451,22 @@ for key, default in [("chat_history", []), ("query_count", 0), ("last_docs", [])
 def process_query(query):
     if is_subject_list_query(query):
         return answer_semester_subjects(query), []
-    else:
-        docs = hybrid_search(query)
-        answer = generate_answer(query, docs)
-        return answer, docs
+    if is_ai_curriculum_query(query):
+        return answer_ai_curriculum_subjects(query), []
+    if is_focus_area_query(query):
+        return answer_focus_areas(query), []
+    if is_pcc_list_query(query):
+        return answer_pcc_subjects(query), []
+    if is_elective_listing_query(query):
+        return answer_elective_query(query), []
+    if is_credit_query(query):
+        credit_answer = answer_course_credit_query(query)
+        if credit_answer != FALLBACK_MESSAGE:
+            return credit_answer, []
+
+    docs = hybrid_search(query)
+    answer = generate_answer(query, docs)
+    return answer, docs
 
 def fire_query(q):
     q = q.strip()
