@@ -7,6 +7,12 @@ from datetime import datetime
 from retrieval.hybrid import hybrid_search
 from llm.generator import generate_answer
 from guardrails import FALLBACK_MESSAGE
+from utils.syllabus import (
+    build_semester_course_catalog,
+    clean_course_name,
+    detect_query_semester,
+    is_valid_course_code,
+)
 
 
 # =========================================================
@@ -189,11 +195,6 @@ div[data-testid="stChatInput"] button { color: var(--color-primary) !important; 
 # =========================================================
 # BACKEND LOGIC & CONSTANTS
 # =========================================================
-SEMESTER_MAP = {
-    "1": "I", "2": "II", "3": "III", "4": "IV", "5": "V", "6": "VI", "7": "VII", "8": "VIII",
-    "i": "I", "ii": "II", "iii": "III", "iv": "IV", "v": "V", "vi": "VI", "vii": "VII", "viii": "VIII",
-}
-
 @st.cache_data(show_spinner=False)
 def load_all_chunks():
     try:
@@ -203,25 +204,13 @@ def load_all_chunks():
         return []
 
 def detect_semester(query):
-    q = query.lower()
-    match = re.search(r"\b(?:semester|sem)\s*(1|2|3|4|5|6|7|8|i|ii|iii|iv|v|vi|vii|viii)\b", q, re.IGNORECASE)
-    if not match: return None
-    value = match.group(1).lower()
-    roman = SEMESTER_MAP.get(value)
-    if not roman: return None
-    return f"SEMESTER-{roman}"
+    return detect_query_semester(query)
 
 def is_subject_list_query(query):
     q = query.lower()
     has_semester = detect_semester(query) is not None
     has_subject_word = any(word in q for word in ["subject", "subjects", "course", "courses", "paper", "papers", "list"])
     return has_semester and has_subject_word
-
-def clean_course_name(name):
-    name = str(name or "")
-    name = name.replace(":", " ")
-    name = re.sub(r"\s+", " ", name)
-    return name.strip()
 
 def extract_courses_from_text(text):
     courses = []
@@ -240,50 +229,52 @@ def extract_courses_from_text(text):
 
 def answer_semester_subjects(query):
     semester = detect_semester(query)
-    if not semester: return FALLBACK_MESSAGE
+    if not semester:
+        return FALLBACK_MESSAGE
+
     chunks = load_all_chunks()
-    if not chunks: return FALLBACK_MESSAGE
-    
-    subjects, seen = [], set()
+    if not chunks:
+        return FALLBACK_MESSAGE
+
+    semester_courses, course_lookup = build_semester_course_catalog(chunks)
+    course_rows = semester_courses.get(semester, [])
+    if not course_rows:
+        return FALLBACK_MESSAGE
+
+    course_docs = {}
     for doc in chunks:
         meta = doc.metadata or {}
-        if str(meta.get("semester")) != semester: continue
-        course_code, course_name = meta.get("course_code"), meta.get("course_name")
-        if not course_code or not course_name: continue
-        clean_name = clean_course_name(course_name)
-        key = (course_code, clean_name)
-        if key not in seen:
-            seen.add(key)
-            subjects.append(f"**{course_code}** - {clean_name}")
-            
+        if meta.get("type") != "course":
+            continue
+
+        course_code = str(meta.get("course_code") or "").upper()
+        if not is_valid_course_code(course_code):
+            continue
+
+        resolved = course_lookup.get(course_code)
+        if not resolved or resolved.get("semester") != semester:
+            continue
+
+        course_docs.setdefault(course_code, doc)
+
+    subjects = []
+    seen = set()
+
+    for row in course_rows:
+        course_code = row["course_code"]
+        if course_code in seen or course_code not in course_docs:
+            continue
+
+        seen.add(course_code)
+        subject_name = clean_course_name(row.get("course_name"))
+        if subject_name:
+            subjects.append(f"- **{course_code}** {subject_name}")
+
     if not subjects:
-        semester_text, collecting = "", False
-        next_semester_order = {
-            "SEMESTER-I": "SEMESTER-II", "SEMESTER-II": "SEMESTER-III", "SEMESTER-III": "SEMESTER-IV",
-            "SEMESTER-IV": "SEMESTER-V", "SEMESTER-V": "SEMESTER-VI", "SEMESTER-VI": "SEMESTER-VII",
-            "SEMESTER-VII": "SEMESTER-VIII",
-        }
-        next_sem = next_semester_order.get(semester)
-        
-        for doc in chunks:
-            text = doc.page_content or ""
-            upper_text = text.upper()
-            if semester in upper_text: collecting = True
-            if collecting: semester_text += "\n" + text
-            if collecting and next_sem and next_sem in upper_text: break
-            
-        extracted = extract_courses_from_text(semester_text)
-        for code, name in extracted:
-            key = (code, name)
-            if key not in seen:
-                seen.add(key)
-                subjects.append(f"**{code}** - {name}")
-                
-    if not subjects: return FALLBACK_MESSAGE
-    
-    response = f"### Subjects in {semester.replace('-', ' ')}:\n\n"
-    for subject in subjects: response += f"- {subject}\n"
-    return response.strip()
+        return FALLBACK_MESSAGE
+
+    header = semester.replace("-", " ").title()
+    return f"### Subjects in {header}:\n\n" + "\n".join(subjects)
 
 # =========================================================
 # STATE MANAGEMENT

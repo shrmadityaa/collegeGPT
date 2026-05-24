@@ -10,7 +10,7 @@ with open(CHUNKS_PATH, "rb") as f:
 
 
 bm25_retriever = BM25Retriever.from_documents(chunks)
-bm25_retriever.k = 12
+bm25_retriever.k = 6
 
 
 def bm25_search(query):

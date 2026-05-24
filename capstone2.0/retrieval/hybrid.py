@@ -4,30 +4,21 @@ from collections import defaultdict
 from retrieval.semantic import semantic_search_with_scores
 from retrieval.bm25_retriever import bm25_search, get_all_chunks
 from guardrails import filter_relevant_docs
+from utils.syllabus import (
+    build_semester_course_catalog,
+    clean_course_name,
+    detect_query_semester,
+    is_valid_course_code,
+    resolve_course_metadata,
+)
 
 
-SEMESTER_ROMAN_MAP = {
-    "1": "I",
-    "2": "II",
-    "3": "III",
-    "4": "IV",
-    "5": "V",
-    "6": "VI",
-    "7": "VII",
-    "8": "VIII",
-    "i": "I",
-    "ii": "II",
-    "iii": "III",
-    "iv": "IV",
-    "v": "V",
-    "vi": "VI",
-    "vii": "VII",
-    "viii": "VIII",
-}
+ALL_CHUNKS = get_all_chunks()
+SEMESTER_COURSES, COURSE_LOOKUP = build_semester_course_catalog(ALL_CHUNKS)
 
 
 def doc_key(doc):
-    meta = doc.metadata or {}
+    meta = resolve_course_metadata(doc, COURSE_LOOKUP)
     return (
         meta.get("course_code"),
         meta.get("course_name"),
@@ -48,24 +39,7 @@ def detect_course_code(query):
 
 
 def detect_semester(query):
-    q = query.lower()
-
-    match = re.search(
-        r"\b(?:semester|sem)\s*(1|2|3|4|5|6|7|8|i|ii|iii|iv|v|vi|vii|viii)\b",
-        q,
-        re.IGNORECASE,
-    )
-
-    if not match:
-        return None
-
-    value = match.group(1).lower()
-    roman = SEMESTER_ROMAN_MAP.get(value)
-
-    if not roman:
-        return None
-
-    return f"SEMESTER-{roman}"
+    return detect_query_semester(query)
 
 
 def is_semester_subject_query(query):
@@ -95,33 +69,28 @@ def semester_subject_docs(query):
     if not semester:
         return []
 
-    all_chunks = get_all_chunks()
-
     docs = []
-    seen = set()
+    course_docs = {}
 
-    for doc in all_chunks:
+    for doc in ALL_CHUNKS:
         meta = doc.metadata or {}
-
         if meta.get("type") != "course":
             continue
 
-        if str(meta.get("semester")) != semester:
+        course_code = str(meta.get("course_code") or "").upper()
+        if not is_valid_course_code(course_code):
             continue
 
-        course_code = meta.get("course_code")
-        course_name = meta.get("course_name")
-
-        if not course_code or not course_name:
+        resolved = COURSE_LOOKUP.get(course_code)
+        if not resolved or resolved.get("semester") != semester:
             continue
 
-        key = (course_code, course_name)
+        course_docs.setdefault(course_code, doc)
 
-        if key in seen:
-            continue
-
-        seen.add(key)
-        docs.append(doc)
+    for row in SEMESTER_COURSES.get(semester, []):
+        course_code = row["course_code"]
+        if course_code in course_docs:
+            docs.append(course_docs[course_code])
 
     return docs
 
@@ -144,7 +113,7 @@ def hybrid_search(query, k=8):
         if docs:
             return docs[:k]
 
-    semantic_results = semantic_search_with_scores(query, k=15)
+    semantic_results = semantic_search_with_scores(query, k=8)
     bm25_results = bm25_search(query)
 
     scores = defaultdict(float)
@@ -167,7 +136,7 @@ def hybrid_search(query, k=8):
     course_code_query = detect_course_code(query)
 
     for key, doc in docs_by_key.items():
-        meta = doc.metadata or {}
+        meta = resolve_course_metadata(doc, COURSE_LOOKUP)
         content = doc.page_content
 
         if course_code_query and meta.get("course_code") == course_code_query:
@@ -180,7 +149,7 @@ def hybrid_search(query, k=8):
 
         scores[key] += lexical_overlap(query, content) * 5
 
-        course_name = str(meta.get("course_name") or "").lower()
+        course_name = clean_course_name(meta.get("course_name")).lower()
         if course_name and course_name in query.lower():
             scores[key] += 5
 
@@ -188,4 +157,4 @@ def hybrid_search(query, k=8):
 
     docs = [docs_by_key[key] for key, score in ranked[:k]]
 
-    return filter_relevant_docs(query, docs, max_docs=k)
+    return filter_relevant_docs(query, docs, max_docs=k, course_lookup=COURSE_LOOKUP)

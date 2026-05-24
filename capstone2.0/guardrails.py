@@ -2,8 +2,9 @@ import re
 from typing import Iterable, List, Tuple
 
 from langchain_core.documents import Document
+from utils.syllabus import clean_course_name, resolve_course_metadata
 
-FALLBACK_MESSAGE = "This information is not available in the syllabus document."
+FALLBACK_MESSAGE = "This information is not explicitly present in the uploaded syllabus."
 
 BLOCKED_KEYWORDS = [
     "hostel", "hostels", "hostel fee", "hostel fees",
@@ -32,13 +33,6 @@ def normalize_text(text: str) -> str:
     text = str(text or "").lower()
     text = re.sub(r"[^a-z0-9+.#]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
-
-
-def clean_course_name(name: str) -> str:
-    name = str(name or "")
-    name = re.sub(r"^[\s:;\-]+", "", name)
-    name = re.sub(r"\s+", " ", name)
-    return name.strip()
 
 
 def tokenize(text: str) -> set:
@@ -121,23 +115,62 @@ def exact_topic_present(query: str, docs: Iterable[Document]) -> bool:
 
     return any(term in ctx for term in important_terms)
 
-def filter_relevant_docs(query: str, docs: List[Document], max_docs: int = 8) -> List[Document]:
+def filter_relevant_docs(
+    query: str,
+    docs: List[Document],
+    max_docs: int = 8,
+    course_lookup=None,
+) -> List[Document]:
     if not docs:
         return []
 
     q_norm = normalize_text(query)
     q_tokens = tokenize(query)
+    semester_match = re.search(
+        r"\b(?:semester|sem)\s*(1|2|3|4|5|6|7|8|i|ii|iii|iv|v|vi|vii|viii)\b",
+        q_norm,
+        re.IGNORECASE,
+    )
+
+    semester_query = None
+
+    if semester_match:
+        value = semester_match.group(1).upper()
+
+        roman_map = {
+            "1": "I",
+            "2": "II",
+            "3": "III",
+            "4": "IV",
+            "5": "V",
+            "6": "VI",
+            "7": "VII",
+            "8": "VIII",
+        }
+
+        value = roman_map.get(value, value)
+
+        semester_query = f"SEMESTER-{value}"
+
     course_code = re.search(COURSE_CODE_PATTERN, query, re.IGNORECASE)
     course_code = course_code.group(0).upper() if course_code else None
 
     scored = []
     for doc in docs:
+        resolved = resolve_course_metadata(doc, course_lookup or {})
+
+        if semester_query:
+            doc_sem = str(resolved.get("semester") or "").upper()
+
+            if doc_sem != semester_query:
+                continue
+
         content_norm = normalize_text(doc.page_content)
         metadata = doc.metadata or {}
         score = 0.0
 
-        meta_course_code = str(metadata.get("course_code") or "").upper()
-        course_name_raw = clean_course_name(metadata.get("course_name"))
+        meta_course_code = str(resolved.get("course_code") or metadata.get("course_code") or "").upper()
+        course_name_raw = clean_course_name(resolved.get("course_name") or metadata.get("course_name"))
         course_name_norm = normalize_text(course_name_raw)
 
         # Strongest rule: if user asks an exact course name, keep that course above topic-only matches.

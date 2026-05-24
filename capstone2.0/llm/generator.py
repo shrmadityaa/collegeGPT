@@ -8,8 +8,11 @@ from guardrails import (
     clean_course_name,
 )
 from llm.prompts import SYSTEM_PROMPT
+from retrieval.bm25_retriever import get_all_chunks
+from utils.syllabus import build_semester_course_catalog, resolve_course_metadata
 
 MODEL_NAME = "phi3:mini"
+_, COURSE_LOOKUP = build_semester_course_catalog(get_all_chunks())
 
 
 def _restrict_to_exact_course_if_possible(query, docs):
@@ -19,7 +22,7 @@ def _restrict_to_exact_course_if_possible(query, docs):
     exact_codes = set()
 
     for doc in docs:
-        meta = doc.metadata or {}
+        meta = resolve_course_metadata(doc, COURSE_LOOKUP)
 
         raw_course_name = meta.get("course_name")
         course_name = normalize_text(clean_course_name(raw_course_name))
@@ -54,19 +57,23 @@ def _format_context(docs):
     context_blocks = []
 
     for i, doc in enumerate(docs[:4], start=1):
-        meta = doc.metadata or {}
+        meta = resolve_course_metadata(doc, COURSE_LOOKUP)
 
         course_name = clean_course_name(meta.get("course_name"))
         course_code = meta.get("course_code")
         semester = meta.get("semester")
+        credits = meta.get("credits")
+        ltp = meta.get("ltp")
 
         header = (
             f"Source {i}\n"
-            f"Type: {meta.get('type')}\n"
-            f"Page: {meta.get('page')}\n"
+            f"Type: {(doc.metadata or {}).get('type')}\n"
+            f"Page: {(doc.metadata or {}).get('page')}\n"
             f"Semester: {semester}\n"
             f"Course Code: {course_code}\n"
-            f"Course Name: {course_name}"
+            f"Course Name: {course_name}\n"
+            f"L-T-P: {ltp or 'Not mentioned'}\n"
+            f"Credits: {credits or 'Not mentioned'}"
         )
 
         context_blocks.append(
