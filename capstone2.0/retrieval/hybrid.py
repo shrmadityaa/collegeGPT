@@ -13,7 +13,6 @@ from utils.syllabus import (
     detect_query_intents,
     detect_query_semester,
     doc_mentions_course,
-    extract_focus_areas,
     filter_electives_for_query,
     get_focus_area_page_docs,
     is_ai_curriculum_query,

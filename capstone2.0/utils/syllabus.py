@@ -101,6 +101,138 @@ ELECTIVE_TOPIC_KEYWORDS = {
     ],
 }
 
+FOCUS_AREA_QUERY_TERMS = [
+    "focus area",
+    "focus areas",
+    "specialization",
+    "specializations",
+    "domain",
+    "domains",
+    "pathway",
+    "pathways",
+    "track",
+    "tracks",
+    "elective focus",
+]
+
+FOCUS_AREA_AFTER_SEMESTER_IV_TERMS = [
+    "after semester iv",
+    "after semester 4",
+    "after sem iv",
+    "after sem 4",
+    "semester iv",
+    "semester 4",
+    "sem iv",
+    "sem 4",
+]
+
+FOCUS_DOMAIN_KEYWORDS = [
+    (
+        "AI / Machine Learning",
+        [
+            "machine learning",
+            "artificial intelligence",
+            " ai",
+            "agentic ai",
+            "computer vision",
+            "image processing",
+            "deep learning",
+            "natural language processing",
+            "nlp",
+            "speech processing",
+            "generative ai",
+            "conversational ai",
+            "robotics",
+            "reinforcement learning",
+        ],
+    ),
+    (
+        "Cyber Security",
+        [
+            "cyber",
+            "security",
+            "secure coding",
+            "ethical hacking",
+            "hacking",
+            "forensic",
+            "blockchain",
+            "network defence",
+            "network defense",
+        ],
+    ),
+    (
+        "Data Analytics",
+        [
+            "data analytics",
+            "data science",
+            "predictive analytics",
+            "statistics",
+            "statistical",
+            "analytics",
+            "database",
+            "matrix computation",
+            "numerical optimization",
+        ],
+    ),
+    (
+        "Networking",
+        [
+            "network",
+            "communication",
+            "connected vehicles",
+        ],
+    ),
+    (
+        "Intelligent Transportation",
+        [
+            "intelligent transportation",
+            "automobile",
+            "mobility systems",
+            "connected vehicles",
+        ],
+    ),
+    (
+        "Software Systems",
+        [
+            "software engineering",
+            "enterprise web",
+            "source code management",
+            "build and release",
+            "continuous integration",
+            "continuous deployment",
+            "test automation",
+            "compiler",
+            "cloud",
+            "devops",
+            "system provisioning",
+            "configuration management",
+            "database engineer",
+            "computer architecture",
+            "theory of computation",
+            "parallel",
+            "distributed computing",
+            "gpu computing",
+        ],
+    ),
+    (
+        "Emerging Technologies",
+        [
+            "augmented",
+            "virtual reality",
+            "3d modelling",
+            "animation",
+            "game design",
+            "simulation",
+            "modelling",
+            "modeling",
+            "ui",
+            "ux",
+            "edge ai",
+            "robotics",
+        ],
+    ),
+]
+
 AI_CURRICULUM_KEYWORDS = [
     "ai",
     "artificial intelligence",
@@ -289,27 +421,12 @@ def is_ai_curriculum_query(query):
 def is_focus_area_query(query):
     q_norm = normalize_course_text(query)
     has_focus_intent = any(
-        phrase in q_norm
-        for phrase in [
-            "focus area",
-            "focus areas",
-            "specialization",
-            "specializations",
-            "pathway",
-            "pathways",
-            "elective focus",
-        ]
+        text_matches_keyword(q_norm, normalize_course_text(phrase))
+        for phrase in FOCUS_AREA_QUERY_TERMS
     )
     has_semester_iv = any(
-        phrase in q_norm
-        for phrase in [
-            "semester iv",
-            "semester 4",
-            "sem iv",
-            "sem 4",
-            "after semester iv",
-            "after semester 4",
-        ]
+        text_matches_keyword(q_norm, normalize_course_text(phrase))
+        for phrase in FOCUS_AREA_AFTER_SEMESTER_IV_TERMS
     )
     return has_focus_intent and has_semester_iv
 
@@ -551,6 +668,126 @@ def collect_ai_related_subjects(semester_courses, elective_catalog):
     return core_subjects, elective_subjects
 
 
+def format_course_display_name(name):
+    name = clean_course_name(name)
+    if not name:
+        return ""
+
+    if name.upper() == name:
+        name = name.title()
+
+    for word in ["And", "For", "In", "Of", "The", "Using"]:
+        name = re.sub(rf"\b{word}\b", word.lower(), name)
+
+    replacements = {
+        " Ai": " AI",
+        "Al AI": "al AI",
+        "Conversation al AI": "Conversational AI",
+        "Ui": "UI",
+        "Ux": "UX",
+        "Gpu": "GPU",
+        "Nlp": "NLP",
+        "Devops": "DevOps",
+        "3D": "3D",
+        "Iot": "IoT",
+        "Ii": "II",
+        "Iii": "III",
+        "Iv": "IV",
+        "Configuration Management Mana": "Configuration Management",
+    }
+
+    for wrong, right in replacements.items():
+        name = name.replace(wrong, right)
+
+    return name
+
+
+def _focus_domain_for_course(course_name):
+    name_norm = normalize_course_text(course_name)
+
+    for domain, keywords in FOCUS_DOMAIN_KEYWORDS:
+        if any(text_matches_keyword(name_norm, normalize_course_text(keyword)) for keyword in keywords):
+            return domain
+
+    return None
+
+
+def build_focus_area_domains(semester_courses, elective_catalog):
+    semester_order = {
+        "SEMESTER-I": 1,
+        "SEMESTER-II": 2,
+        "SEMESTER-III": 3,
+        "SEMESTER-IV": 4,
+        "SEMESTER-V": 5,
+        "SEMESTER-VI": 6,
+        "SEMESTER-VII": 7,
+        "SEMESTER-VIII": 8,
+    }
+    slot_order = {"I": 1, "II": 2, "III": 3, "IV": 4}
+    domain_names = [domain for domain, _ in FOCUS_DOMAIN_KEYWORDS]
+    grouped = {domain: [] for domain in domain_names}
+    seen = set()
+
+    candidates = []
+    for semester, rows in semester_courses.items():
+        if semester_order.get(semester, 0) <= 4:
+            continue
+
+        for index, row in enumerate(rows):
+            if not is_valid_semester_subject_row(row):
+                continue
+
+            candidates.append(
+                {
+                    **row,
+                    "source_order": (semester_order.get(semester, 99), index, row.get("course_code") or ""),
+                }
+            )
+
+    for index, row in enumerate(elective_catalog):
+        candidates.append(
+            {
+                **row,
+                "source_order": (20 + slot_order.get(row.get("slot"), 99), index, row.get("course_code") or ""),
+            }
+        )
+
+    for row in sorted(candidates, key=lambda item: item["source_order"]):
+        course_name = format_course_display_name(row.get("course_name"))
+        if not course_name:
+            continue
+
+        domain = _focus_domain_for_course(course_name)
+        if not domain:
+            continue
+
+        key = (domain, row.get("course_code"), normalize_course_text(course_name))
+        if key in seen:
+            continue
+
+        seen.add(key)
+        grouped[domain].append(course_name)
+
+    return {domain: grouped[domain] for domain in domain_names if grouped[domain]}
+
+
+def format_focus_area_domain_summary(semester_courses, elective_catalog):
+    grouped = build_focus_area_domains(semester_courses, elective_catalog)
+    lines = ["### Focus Areas After Semester IV", ""]
+
+    if not grouped:
+        lines.append("No higher-semester focus-area courses were found in the syllabus catalog.")
+        return "\n".join(lines)
+
+    for domain, courses in grouped.items():
+        lines.append(f"**{domain}:**")
+        for course in courses:
+            lines.append(f"- {course}")
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
 def get_focus_area_page_docs(docs):
     page_docs = [
         doc for doc in docs
@@ -760,6 +997,201 @@ def doc_mentions_course(doc, course_match):
             return True
 
     return False
+
+
+def is_lab_practical_query(query):
+    return "lab" in detect_query_intents(query)
+
+
+def _doc_sort_key(doc):
+    metadata = getattr(doc, "metadata", {}) or {}
+    page = metadata.get("page")
+    part = metadata.get("part")
+    return (
+        page if isinstance(page, int) else 9999,
+        part if isinstance(part, int) else 9999,
+        str(metadata.get("course_code") or ""),
+    )
+
+
+def _dedupe_docs(docs):
+    seen = set()
+    unique_docs = []
+
+    for doc in docs:
+        metadata = getattr(doc, "metadata", {}) or {}
+        key = (
+            metadata.get("type"),
+            metadata.get("page"),
+            metadata.get("course_code"),
+            metadata.get("part"),
+            getattr(doc, "page_content", "")[:80],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_docs.append(doc)
+
+    return sorted(unique_docs, key=_doc_sort_key)
+
+
+def _course_lab_source_docs(query, docs, all_chunks, course_lookup, course_name_index):
+    source_docs = list(docs or [])
+    course_matches = [
+        course
+        for course in match_query_to_courses(query, course_lookup or {}, course_name_index)
+        if course.get("score", 0) >= 80
+    ]
+
+    if not all_chunks or not course_matches:
+        return _dedupe_docs(source_docs)
+
+    page_docs = [
+        doc
+        for doc in all_chunks
+        if (getattr(doc, "metadata", {}) or {}).get("type") == "page"
+    ]
+    page_by_number = {
+        (getattr(doc, "metadata", {}) or {}).get("page"): doc
+        for doc in page_docs
+    }
+    pages_to_add = set()
+
+    for course in course_matches[:2]:
+        course_code = str(course.get("course_code") or "").upper()
+        course_name = normalize_course_text(course.get("course_name"))
+
+        for doc in page_docs:
+            metadata = getattr(doc, "metadata", {}) or {}
+            text = str(getattr(doc, "page_content", "") or "")
+            text_norm = normalize_course_text(text)
+            page = metadata.get("page")
+
+            if not page:
+                continue
+
+            matches_course = (
+                course_code and course_code in text.upper()
+            ) or (
+                course_name and course_name in text_norm
+            )
+
+            if not matches_course:
+                continue
+
+            pages_to_add.add(page)
+
+            for offset in (1, 2):
+                next_doc = page_by_number.get(page + offset)
+                if not next_doc:
+                    break
+
+                next_text = str(getattr(next_doc, "page_content", "") or "")
+                next_starts_course = re.match(r"\s*U[A-Z]{2,5}(?:\d{3}|XXX)\s*:", next_text, re.IGNORECASE)
+                if next_starts_course and course_code not in next_text.upper()[:40]:
+                    break
+
+                pages_to_add.add(page + offset)
+
+    source_docs.extend(
+        doc
+        for doc in page_docs
+        if (getattr(doc, "metadata", {}) or {}).get("page") in pages_to_add
+    )
+    return _dedupe_docs(source_docs)
+
+
+def _extract_lab_practical_span(text):
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    header_match = re.search(
+        r"\b(?:Laboratory Work|Practical Work|Lab(?:oratory)? Experiments?)\b\s*:?",
+        text,
+        re.IGNORECASE,
+    )
+    if not header_match:
+        return ""
+
+    start = header_match.end()
+    tail = text[start:]
+    stop_match = re.search(
+        r"\b(?:Course Learning Objectives?|Course Learning Outcomes?|Course Outcomes?|"
+        r"Text Books?|Reference Books?|Evaluation Scheme|Course Objectives?|Syllabus)\b",
+        tail,
+        re.IGNORECASE,
+    )
+    if stop_match:
+        tail = tail[:stop_match.start()]
+
+    return tail.strip()
+
+
+def _clean_lab_item(item):
+    item = re.sub(r"\s+", " ", str(item or "")).strip(" .;")
+    item = item.replace(" -", "-")
+    return item
+
+
+def extract_lab_practical_items(query, docs, all_chunks=None, course_lookup=None, course_name_index=None):
+    if not is_lab_practical_query(query):
+        return []
+
+    source_docs = _course_lab_source_docs(
+        query,
+        docs,
+        all_chunks,
+        course_lookup,
+        course_name_index,
+    )
+    combined_text = " ".join(str(getattr(doc, "page_content", "") or "") for doc in source_docs)
+    lab_span = _extract_lab_practical_span(combined_text)
+    if not lab_span:
+        return []
+
+    items = []
+    seen = set()
+    numbered_pattern = re.compile(r"(?:^|\s)(\d{1,2})[.)]\s*(.*?)(?=\s\d{1,2}[.)]\s|$)")
+
+    for match in numbered_pattern.finditer(lab_span):
+        item = _clean_lab_item(match.group(2))
+        if not item:
+            continue
+
+        micro_project_split = re.search(r"\bMicro Project\s*:\s*", item, re.IGNORECASE)
+        if micro_project_split:
+            before = _clean_lab_item(item[:micro_project_split.start()])
+            after = _clean_lab_item(item[micro_project_split.start():])
+            for candidate in [before, after]:
+                key = normalize_course_text(candidate)
+                if candidate and key not in seen:
+                    seen.add(key)
+                    items.append(candidate)
+            continue
+
+        key = normalize_course_text(item)
+        if key not in seen:
+            seen.add(key)
+            items.append(item)
+
+    if not items:
+        micro_match = re.search(r"\bMicro Project\s*:\s*.*", lab_span, re.IGNORECASE)
+        if micro_match:
+            items.append(_clean_lab_item(micro_match.group(0)))
+
+    return items
+
+
+def format_lab_practical_answer(query, docs, all_chunks=None, course_lookup=None, course_name_index=None):
+    items = extract_lab_practical_items(
+        query,
+        docs,
+        all_chunks=all_chunks,
+        course_lookup=course_lookup,
+        course_name_index=course_name_index,
+    )
+    if not items:
+        return ""
+
+    return "\n".join(f"- {item}" for item in items)
 
 
 def section_match_score(text, intents):

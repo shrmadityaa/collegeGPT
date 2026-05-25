@@ -16,9 +16,9 @@ from utils.syllabus import (
     detect_elective_slot,
     detect_elective_topic,
     detect_query_semester,
-    extract_focus_areas,
     filter_electives_for_query,
     filter_valid_subject_rows,
+    format_focus_area_domain_summary,
     format_semester_label,
     is_ai_curriculum_query,
     is_credit_query,
@@ -382,15 +382,8 @@ def answer_ai_curriculum_subjects(query):
 
 
 def answer_focus_areas(query):
-    focus_areas = extract_focus_areas(load_all_chunks())
-    if not focus_areas:
-        return FALLBACK_MESSAGE
-
-    lines = ["### Focus Areas After Semester IV", ""]
-    for item in focus_areas:
-        lines.append(f"- {item['name']}")
-
-    return "\n".join(lines)
+    semester_courses, _, _, elective_catalog = load_catalog_data()
+    return format_focus_area_domain_summary(semester_courses, elective_catalog)
 
 def answer_semester_subjects(query):
     semester = detect_semester(query)

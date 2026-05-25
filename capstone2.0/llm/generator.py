@@ -14,7 +14,9 @@ from utils.syllabus import (
     build_elective_catalog,
     build_semester_course_catalog,
     collect_ai_related_subjects,
-    extract_focus_areas,
+    detect_query_intents,
+    format_lab_practical_answer,
+    format_focus_area_domain_summary,
     format_semester_label,
     is_ai_curriculum_query,
     is_focus_area_query,
@@ -60,15 +62,7 @@ def _answer_ai_curriculum_query():
 
 
 def _answer_focus_area_query():
-    focus_areas = extract_focus_areas(ALL_CHUNKS)
-    if not focus_areas:
-        return FALLBACK_MESSAGE
-
-    lines = ["### Focus Areas After Semester IV", ""]
-    for item in focus_areas:
-        lines.append(f"- {item['name']}")
-
-    return "\n".join(lines)
+    return format_focus_area_domain_summary(SEMESTER_COURSES, ELECTIVE_CATALOG)
 
 
 def _restrict_to_exact_course_if_possible(query, docs):
@@ -169,6 +163,18 @@ def generate_answer(query, docs):
         return _answer_focus_area_query()
 
     docs = _restrict_to_exact_course_if_possible(query, docs)
+
+    if "lab" in detect_query_intents(query):
+        lab_answer = format_lab_practical_answer(
+            query,
+            docs,
+            all_chunks=ALL_CHUNKS,
+            course_lookup=COURSE_LOOKUP,
+            course_name_index=COURSE_NAME_INDEX,
+        )
+        if lab_answer:
+            return lab_answer
+        return FALLBACK_MESSAGE
 
     is_valid, message = validate_query_and_docs(
         query,
