@@ -1,5 +1,6 @@
 import re
 import pickle
+import html
 import streamlit as st
 from datetime import datetime
 
@@ -40,7 +41,7 @@ st.set_page_config(
     page_title="CollegeGPT Syllabus Assistant",
     page_icon="🎓",
     layout="wide",
-    initial_sidebar_state="expanded", # Forces sidebar open on load
+    initial_sidebar_state="expanded",
 )
 
 
@@ -52,7 +53,6 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
-/* ---- Safe Font Reset ---- */
 html, body, p, h1, h2, h3, h4, h5, h6, div, span, input, button, textarea { 
     font-family: 'Inter', sans-serif; 
 }
@@ -65,74 +65,101 @@ html, body, p, h1, h2, h3, h4, h5, h6, div, span, input, button, textarea {
     vertical-align: middle;
 }
 
-/* ---- Palette Variables ---- */
 :root {
-    --bg-background: #0e1117;
-    --bg-surface-low: #161b22;
-    --bg-surface: #0e1117;
-    --bg-surface-variant: #21262d;
-    --border-outline: #30363d;
-    --border-outline-variant: #21262d;
-    --text-on-background: #c9d1d9;
-    --text-on-surface: #ffffff;
-    --text-on-surface-variant: #8b949e;
-    --color-primary: #57f1db;
+    --bg-background: #f7f8fa;
+    --bg-surface: #ffffff;
+    --bg-surface-low: #f1f3f5;
+    --bg-surface-variant: #e9ecef;
+    --border-outline: #d9dee5;
+    --text-on-background: #20242a;
+    --text-on-surface: #101418;
+    --text-on-surface-variant: #667085;
+    --color-primary: #146c5f;
+    --color-primary-soft: #e4f4f1;
 }
 
 .stApp { background: var(--bg-background) !important; color: var(--text-on-background) !important; }
 
-/* FIX: Only hide the top right menu, NOT the whole header (which holds the sidebar toggle) */
 #MainMenu, footer { visibility: hidden; }
 header[data-testid="stHeader"] { background: transparent !important; }
-[data-testid="stToolbar"] { visibility: hidden !important; }
+[data-testid="stToolbar"] {
+    visibility: visible !important;
+    right: 0.75rem !important;
+}
+[data-testid="stToolbar"] [data-testid="stDeployButton"],
+[data-testid="stToolbar"] [data-testid="stStatusWidget"],
+[data-testid="stToolbar"] button[kind="header"] {
+    display: none !important;
+}
 
 .block-container { padding: 0 !important; max-width: 100% !important; }
-[data-testid="stVerticalBlock"] { gap: 0rem !important; }
+[data-testid="stVerticalBlock"] { gap: 0.4rem !important; }
 
-/* =========================================================
-   THE PULL-OUT SYMBOL (COLLAPSED CONTROL)
-   ========================================================= */
 [data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
     color: var(--color-primary) !important;
-    background-color: var(--bg-surface-variant) !important;
-    border: 1px solid var(--color-primary) !important;
+    background-color: var(--bg-surface) !important;
+    border: 1px solid var(--border-outline) !important;
     border-radius: 50% !important;
-    top: 0.5rem !important;
+    top: 0.7rem !important;
     left: 1rem !important;
     transition: all 0.3s ease !important;
-    box-shadow: 0 4px 12px rgba(87, 241, 219, 0.15) !important;
+    box-shadow: none !important;
     z-index: 9999 !important;
 }
+[data-testid="collapsedControl"]::before {
+    content: "keyboard_double_arrow_right";
+    font-family: "Material Symbols Outlined";
+    font-size: 20px;
+    line-height: 1;
+}
 [data-testid="collapsedControl"]:hover {
-    background-color: var(--color-primary) !important;
-    color: #000 !important;
+    background-color: var(--color-primary-soft) !important;
+}
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapseButton"] *,
+[data-testid="stSidebarCollapseButton"] button {
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+[data-testid="stSidebarCollapseButton"] button {
+    color: var(--color-primary) !important;
+    background: var(--bg-surface) !important;
+    border-radius: 8px !important;
+}
+[data-testid="stSidebarCollapseButton"] button::before {
+    content: "keyboard_double_arrow_left";
+    font-family: "Material Symbols Outlined";
+    font-size: 20px;
+    line-height: 1;
 }
 
-/* ---- Sidebar Styling ---- */
 section[data-testid="stSidebar"] {
-    background: var(--bg-surface-low) !important;
+    background: var(--bg-surface) !important;
     border-right: 1px solid var(--border-outline) !important;
 }
-section[data-testid="stSidebar"] .block-container { padding: 24px 16px !important; }
+section[data-testid="stSidebar"] .block-container { padding: 22px 16px !important; }
 
-/* Sidebar Buttons (Quick Questions) */
 section[data-testid="stSidebar"] div[data-testid="stButton"] > button {
     background: transparent !important;
     border: 1px solid var(--border-outline) !important;
-    border-radius: 0.5rem !important;
+    border-radius: 8px !important;
     color: var(--text-on-background) !important;
     font-size: 13px !important;
-    padding: 10px 12px !important;
+    font-weight: 500 !important;
+    padding: 9px 11px !important;
     justify-content: flex-start !important;
     text-align: left !important;
     transition: all 0.2s ease !important;
     width: 100% !important;
-    margin-bottom: 8px !important;
+    margin-bottom: 6px !important;
+    box-shadow: none !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stButton"] > button:hover {
-    background: var(--bg-surface-variant) !important;
+    background: var(--color-primary-soft) !important;
     border-color: var(--color-primary) !important;
-    color: var(--text-on-surface) !important;
+    color: var(--color-primary) !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stButton"] > button p {
     margin: 0 !important; 
@@ -141,71 +168,102 @@ section[data-testid="stSidebar"] div[data-testid="stButton"] > button p {
     text-overflow: ellipsis !important;
 }
 
-/* Stat Cards */
-.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 24px; }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 22px; }
 .stat-card {
-    background: transparent; border: 1px solid var(--border-outline);
-    border-radius: 0.5rem; padding: 10px; display: flex; flex-direction: column;
+    background: var(--bg-surface-low); border: 1px solid transparent;
+    border-radius: 8px; padding: 10px; display: flex; flex-direction: column;
 }
 .stat-lbl { font-size: 11px; color: var(--text-on-surface-variant); font-weight: 500; }
 .stat-val { font-size: 15px; font-weight: 600; color: var(--text-on-surface); margin-top: 4px;}
 .stat-val.primary { color: var(--color-primary); }
 
-.slbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-on-surface-variant); margin-bottom: 12px; }
+.slbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-on-surface-variant); margin-bottom: 10px; }
 .feat { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-on-background); margin-bottom: 10px; }
 .feat .icon { color: var(--color-primary); font-size: 16px; font-weight: bold;}
+.history-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }
+.history-item {
+    border: 1px solid var(--border-outline);
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: var(--text-on-background);
+    font-size: 12px;
+    line-height: 1.35;
+    background: var(--bg-surface);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 
-/* ---- Main Header ---- */
 .top-header {
-    display: flex; justify-content: space-between; padding: 0 32px; height: 60px; 
-    border-bottom: 1px solid var(--border-outline); background: var(--bg-background); 
+    display: none; justify-content: space-between; padding: 0 32px; height: 56px; 
+    border-bottom: 1px solid var(--border-outline); background: rgba(247, 248, 250, 0.94); 
     width: 100%; align-items: center; position: sticky; top: 0; z-index: 99;
+    backdrop-filter: blur(10px);
 }
 .header-left { display: flex; align-items: center; gap: 12px; }
-.header-left .icon { color: var(--text-on-surface-variant); font-size: 20px; }
+.header-left .icon { color: var(--color-primary); font-size: 19px; }
 .header-left h2 { font-size: 14px; margin: 0; color: var(--text-on-surface); font-weight: 600; }
 .header-left p { font-size: 12px; margin: 0; color: var(--text-on-surface-variant); }
 
-/* ---- Empty State Hero ---- */
 .hero-container {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 30px 24px 20px; text-align: center; margin-top: 10px;
+    padding: 22px 24px 20px; text-align: center; margin-top: 0;
 }
 .hero-icon-box {
-    width: 56px; height: 56px; border-radius: 50%; background: var(--bg-surface-variant); 
+    width: 44px; height: 44px; border-radius: 8px; background: var(--color-primary-soft); 
     border: 1px solid var(--border-outline); display: flex; align-items: center; 
-    justify-content: center; margin-bottom: 20px;
+    justify-content: center; margin-bottom: 18px;
 }
-.hero-icon-box .icon { font-size: 28px; color: var(--text-on-surface); }
-.hero-title { font-size: 32px; font-weight: 700; color: var(--text-on-surface); margin-bottom: 8px; letter-spacing: -0.01em; }
-.hero-sub { font-size: 15px; color: var(--text-on-background); margin-bottom: 30px; }
+.hero-icon-box .icon { font-size: 24px; color: var(--color-primary); }
+.hero-title { font-size: 28px; font-weight: 700; color: var(--text-on-surface); margin-bottom: 8px; letter-spacing: 0; }
+.hero-sub { font-size: 14px; color: var(--text-on-surface-variant); margin-bottom: 26px; }
 
-/* ---- Pill Buttons (Hero center area) ---- */
 div[data-testid="stMainBlockContainer"] div.stButton > button {
     background: transparent !important; border: 1px solid var(--border-outline) !important;
-    border-radius: 9999px !important; color: var(--text-on-background) !important; font-size: 13px !important;
-    padding: 6px 16px !important; transition: all 0.2s ease !important; margin-bottom: 12px !important;
+    border-radius: 8px !important; color: var(--text-on-background) !important; font-size: 13px !important;
+    font-weight: 500 !important; padding: 8px 12px !important; transition: all 0.2s ease !important; margin-bottom: 10px !important;
+    box-shadow: none !important;
 }
 div[data-testid="stMainBlockContainer"] div.stButton > button:hover { 
-    background: var(--bg-surface-variant) !important; border-color: var(--text-on-surface-variant) !important; 
+    background: var(--bg-surface) !important; border-color: var(--color-primary) !important; color: var(--color-primary) !important; 
 }
-.sem-pills-row div.stButton > button { padding: 4px 12px !important; border-radius: 0.5rem !important; }
+.sem-pills-row div.stButton > button { padding: 7px 8px !important; border-radius: 8px !important; }
 
-/* ---- Source Expander styling ---- */
 div[data-testid="stExpander"] {
-    background-color: var(--bg-surface-low) !important;
+    background-color: var(--bg-surface) !important;
     border: 1px solid var(--border-outline) !important;
-    border-radius: 0.75rem !important;
+    border-radius: 8px !important;
     margin-top: 1rem !important;
+    box-shadow: none !important;
 }
 
-/* ---- Chat Input ---- */
-div[data-testid="stChatInput"] { background: var(--bg-surface-low) !important; border: 1px solid var(--border-outline) !important; border-radius: 0.5rem !important; }
-div[data-testid="stChatInput"] textarea { color: var(--text-on-surface) !important; }
+div[data-testid="stChatMessage"] {
+    background: var(--bg-surface) !important;
+    border: 1px solid var(--border-outline) !important;
+    border-radius: 8px !important;
+    margin-bottom: 10px !important;
+    padding: 4px 8px !important;
+}
+div[data-testid="stChatMessage"] * {
+    color: var(--text-on-surface) !important;
+}
+
+div[data-testid="stBottom"] > div {
+    background: var(--bg-background) !important;
+}
+div[data-testid="stChatInput"] { background: var(--bg-surface) !important; border: 1px solid var(--border-outline) !important; border-radius: 8px !important; box-shadow: none !important; }
+div[data-testid="stChatInput"] div { background: var(--bg-surface) !important; color: var(--text-on-surface) !important; }
+div[data-testid="stChatInput"] textarea { color: var(--text-on-surface) !important; caret-color: var(--text-on-surface) !important; }
+div[data-testid="stChatInput"] textarea::placeholder { color: var(--text-on-surface-variant) !important; opacity: 1 !important; }
 div[data-testid="stChatInput"] button { color: var(--color-primary) !important; }
 
-/* Main wrapper padding adjusted */
-.main-wrapper { padding: 10px 40px; max-width: 900px; margin: 0 auto; padding-bottom: 120px; }
+.main-wrapper { padding: 16px 32px; max-width: 860px; margin: 0 auto; padding-bottom: 120px; }
+
+@media (max-width: 760px) {
+    .top-header { padding: 0 18px; }
+    .main-wrapper { padding: 12px 18px 110px; }
+    .hero-title { font-size: 24px; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -470,6 +528,10 @@ def fire_query(q):
     st.session_state.chat_history.append(("bot", answer))
     st.session_state.last_docs = docs
 
+def go_home():
+    st.session_state.chat_history = []
+    st.session_state.last_docs = []
+
 
 # =========================================================
 # THE SIDEBAR
@@ -487,6 +549,22 @@ with st.sidebar:
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    user_questions = [
+        message
+        for role, message in st.session_state.chat_history
+        if role == "user"
+    ]
+    if user_questions:
+        st.markdown('<div class="slbl">CHAT HISTORY</div>', unsafe_allow_html=True)
+        history_lines = [
+            f'<div class="history-item">{html.escape(question)}</div>'
+            for question in user_questions[-6:]
+        ]
+        st.markdown(
+            '<div class="history-list">' + "".join(history_lines) + '</div>',
+            unsafe_allow_html=True,
+        )
 
     # Session Stats
     st.markdown('<div class="slbl">SESSION</div>', unsafe_allow_html=True)
@@ -577,6 +655,12 @@ if not st.session_state.chat_history:
 
 else:
     # CHAT HISTORY STATE
+    back_col, _ = st.columns([1, 5])
+    with back_col:
+        if st.button("Back", icon=":material/arrow_back:", use_container_width=True):
+            go_home()
+            st.rerun()
+
     for role, message in st.session_state.chat_history:
         with st.chat_message(role, avatar="🧑" if role == "user" else "🎓"):
             st.write(message)
